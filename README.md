@@ -1,4 +1,4 @@
-# Messages MCP Server
+# macOS iMessage MCP Server
 
 Local MCP server for macOS Messages.
 

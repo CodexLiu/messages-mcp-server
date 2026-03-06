@@ -581,7 +581,7 @@ async function queryMessagesDb(sql: string) {
 
 const server = new Server(
   {
-    name: "messages-mcp-server",
+    name: "macos-imessage-mcp-server",
     version: "0.1.0",
   },
   {
@@ -1073,7 +1073,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("messages-mcp-server started");
+  console.error("macos-imessage-mcp-server started");
 }
 
 main().catch((error) => {

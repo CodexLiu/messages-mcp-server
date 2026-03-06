@@ -1,11 +1,11 @@
 {
-  "name": "messages-mcp-server",
+  "name": "macos-imessage-mcp-server",
   "version": "0.1.0",
   "description": "Local MCP server for reading and sending Messages on macOS",
   "private": true,
   "type": "module",
   "bin": {
-    "messages-mcp-server": "./build/index.js"
+    "macos-imessage-mcp-server": "./build/index.js"
   },
   "files": [
     "build"
