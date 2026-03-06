@@ -2,109 +2,42 @@
 
 Local MCP server for macOS Messages.
 
-It uses:
+This server gives an MCP client local access to your Messages data on macOS.
 
-- AppleScript for sending iMessages
-- `Contacts.framework` through a Swift helper for contact lookup and name resolution
-- `~/Library/Messages/chat.db` for inbox and history reads
+It is meant to let an agent:
 
-## What It Can Do
+- search contacts
+- resolve names onto chats and message senders
+- list recent conversations
+- read message history
+- search messages
+- inspect unread chats
+- send iMessages
 
-- Search contacts by name, phone number, or email
-- Resolve names onto chats and message senders
-- List recent chats with last message previews
-- Read messages from a specific conversation
-- Show the latest messages across all chats
-- Search messages by content
-- Show unread chats
-- Resolve a person into matching contacts, chats, and sendable identifiers
-- Send iMessages through the local Messages app
-- Expose read-only Messages database inspection tools for debugging
+Under the hood it uses:
 
-## Manual Setup
+- `Contacts.framework` for contact lookup
+- `~/Library/Messages/chat.db` for reading chats and messages
+- AppleScript for sending through the Messages app
 
-This server needs macOS privacy permissions. Without them, chat reads or contact lookup will fail.
+## Quickstart
 
-### 1. Sign in to Messages
-
-Open the Messages app and make sure the Mac is signed into the account you want to use.
-
-### 2. Grant Full Disk Access
-
-This is required for reading `~/Library/Messages/chat.db`.
-
-1. Open `System Settings`
-2. Go to `Privacy & Security`
-3. Open `Full Disk Access`
-4. Enable Full Disk Access for the app or process that runs this MCP server
-
-Common cases:
-
-- `Codex`
-- `Terminal`
-- `iTerm`
-
-If it is not listed:
-
-1. Click `+`
-2. Add the app you use to run the server
-3. Toggle it on
-
-After enabling it, fully quit and reopen the app.
-
-### 3. Grant Contacts Access
-
-This is required for contact search and name resolution.
-
-1. Open `System Settings`
-2. Go to `Privacy & Security`
-3. Open `Contacts`
-4. Enable Contacts access for the app or process that runs this MCP server
-
-After enabling it, fully quit and reopen the app.
-
-### 4. Grant Automation Access for Sending
-
-This is required because sending goes through AppleScript and the Messages app.
-
-The first time a send action runs, macOS may prompt for automation permissions. Approve the prompt so the host app can control Messages.
-
-If you need to review it manually:
-
-1. Open `System Settings`
-2. Go to `Privacy & Security`
-3. Open `Automation`
-4. Make sure the host app is allowed to control `Messages`
-
-## Install / Run
+1. Open the Messages app and make sure you are signed in.
+2. Open `System Settings > Privacy & Security > Full Disk Access` and enable it for the app that runs this MCP server.
+3. Open `System Settings > Privacy & Security > Contacts` and enable Contacts access for the app that runs this MCP server.
+4. If macOS prompts for automation permission when sending, allow the host app to control `Messages`.
+5. Fully quit and reopen the host app after changing permissions.
+6. Install and build the server:
 
 ```bash
 npm install
 npm run build
 ```
 
-Configure your MCP host to run:
+7. Configure your MCP host to run:
 
 ```bash
 node /absolute/path/to/build/index.js
 ```
 
-## Notes
-
-- Reading chats depends on local Messages database access
-- Contact lookup does not require the Contacts app to be open
-- Sending messages still depends on the Messages app and AppleScript permissions
-- The database tools are read-only and intended for debugging or advanced inspection
-
-## Development
-
-```bash
-npm install
-npm run build
-```
-
-## Architecture
-
-- Contacts are resolved through `scripts/contacts.swift`
-- Message and chat history come from `~/Library/Messages/chat.db`
-- Sending still goes through AppleScript in the Messages app
+After that, the MCP client should be able to read chats, resolve contacts, and send iMessages from this Mac.
