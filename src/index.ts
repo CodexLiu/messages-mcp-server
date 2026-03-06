@@ -48,6 +48,17 @@ type MessageRow = {
   cache_has_attachments: number;
 };
 
+type ContactRecord = {
+  name: string;
+  phones: string[];
+  emails: string[];
+};
+
+type ResolvedParticipant = {
+  identifier: string;
+  contactName: string | null;
+};
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -91,6 +102,18 @@ function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function normalizeIdentifier(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.includes("@")) return trimmed;
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  return digits || trimmed;
+}
+
 function appleTimestampToIso(value: number | null | undefined): string | null {
   if (!value) return null;
   return new Date(Math.trunc(value / 1_000_000) + APPLE_EPOCH_MS).toISOString();
@@ -129,16 +152,101 @@ function getMessageText(text: string | null, attributedHex: string | null): stri
   return plain || decodeAttributedBodyHex(attributedHex);
 }
 
-function formatChatSummary(row: ChatSummaryRow) {
+async function getAllContacts(): Promise<ContactRecord[]> {
+  const script = `
+    tell application "Contacts"
+      set output to "["
+      set isFirst to true
+      repeat with p in every person
+        set personName to (name of p as text)
+        set phonesJson to "["
+        set emailsJson to "["
+
+        repeat with ph in phones of p
+          set phoneValue to (value of ph as text)
+          if phonesJson is not "[" then set phonesJson to phonesJson & ","
+          set phonesJson to phonesJson & "\\"" & phoneValue & "\\""
+        end repeat
+
+        repeat with em in emails of p
+          set emailValue to (value of em as text)
+          if emailsJson is not "[" then set emailsJson to emailsJson & ","
+          set emailsJson to emailsJson & "\\"" & emailValue & "\\""
+        end repeat
+
+        if not isFirst then set output to output & ","
+        set output to output & "{"
+        set output to output & "\\"name\\":\\"" & personName & "\\","
+        set output to output & "\\"phones\\":" & phonesJson & ","
+        set output to output & "\\"emails\\":" & emailsJson
+        set output to output & "}"
+        set isFirst to false
+      end repeat
+      return output & "]"
+    end tell
+  `;
+
+  return JSON.parse(await runAppleScript(script)) as ContactRecord[];
+}
+
+async function buildContactIndex(): Promise<Map<string, string>> {
+  const contacts = await getAllContacts();
+  const index = new Map<string, string>();
+
+  for (const contact of contacts) {
+    for (const phone of contact.phones) {
+      const normalized = normalizeIdentifier(phone);
+      if (normalized) index.set(normalized, contact.name);
+    }
+
+    for (const email of contact.emails) {
+      const normalized = normalizeIdentifier(email);
+      if (normalized) index.set(normalized, contact.name);
+    }
+  }
+
+  return index;
+}
+
+function resolveParticipants(
+  identifiers: string[],
+  contactIndex: Map<string, string>
+): ResolvedParticipant[] {
+  return identifiers.map((identifier) => ({
+    identifier,
+    contactName: contactIndex.get(normalizeIdentifier(identifier)) ?? null,
+  }));
+}
+
+function getPreferredChatName(
+  displayName: string | null,
+  participants: ResolvedParticipant[]
+): string | null {
+  if (displayName?.trim()) return displayName.trim();
+
+  const names = participants
+    .map((participant) => participant.contactName)
+    .filter((name): name is string => Boolean(name));
+
+  if (names.length === 1) return names[0];
+  if (names.length > 1) return names.join(", ");
+  return null;
+}
+
+function formatChatSummary(row: ChatSummaryRow, contactIndex: Map<string, string>) {
+  const participantIds = row.participant_ids ? row.participant_ids.split(",").filter(Boolean) : [];
+  const participants = resolveParticipants(participantIds, contactIndex);
+
   return {
     chatId: row.chat_id,
     chatGuid: row.chat_guid,
     chatIdentifier: row.chat_identifier,
     displayName: row.display_name || null,
+    preferredName: getPreferredChatName(row.display_name, participants),
     service: row.service_name || null,
     isArchived: Boolean(row.is_archived),
     participantCount: row.participant_count,
-    participants: row.participant_ids ? row.participant_ids.split(",").filter(Boolean) : [],
+    participants,
     messageCount: row.message_count,
     unreadCount: row.unread_count,
     lastMessageAt: appleTimestampToIso(row.last_message_date),
@@ -146,7 +254,11 @@ function formatChatSummary(row: ChatSummaryRow) {
   };
 }
 
-function formatMessage(row: MessageRow) {
+function formatMessage(row: MessageRow, contactIndex: Map<string, string>) {
+  const senderContactName = row.sender
+    ? contactIndex.get(normalizeIdentifier(row.sender)) ?? null
+    : null;
+
   return {
     messageId: row.message_id,
     messageGuid: row.message_guid,
@@ -154,8 +266,14 @@ function formatMessage(row: MessageRow) {
     chatGuid: row.chat_guid,
     chatIdentifier: row.chat_identifier,
     chatDisplayName: row.chat_display_name || null,
+    chatPreferredName:
+      row.chat_display_name?.trim() ||
+      (row.chat_identifier
+        ? contactIndex.get(normalizeIdentifier(row.chat_identifier)) ?? null
+        : null),
     service: row.service_name || null,
     sender: row.sender,
+    senderContactName,
     isFromMe: Boolean(row.is_from_me),
     text: getMessageText(row.text, row.attributed_hex),
     sentAt: appleTimestampToIso(row.date),
@@ -234,7 +352,12 @@ async function listChats(limit: number, query: string, includeArchived: boolean)
     limit ${limit};
   `;
 
-  return (await runSqliteJson<ChatSummaryRow>(sql)).map(formatChatSummary);
+  const [rows, contactIndex] = await Promise.all([
+    runSqliteJson<ChatSummaryRow>(sql),
+    buildContactIndex(),
+  ]);
+
+  return rows.map((row) => formatChatSummary(row, contactIndex));
 }
 
 async function readChat(limit: number, chatId: number | null, chatIdentifier: string | null) {
@@ -269,8 +392,12 @@ async function readChat(limit: number, chatId: number | null, chatIdentifier: st
     limit ${limit};
   `;
 
-  const rows = await runSqliteJson<MessageRow>(sql);
-  return rows.reverse().map(formatMessage);
+  const [rows, contactIndex] = await Promise.all([
+    runSqliteJson<MessageRow>(sql),
+    buildContactIndex(),
+  ]);
+
+  return rows.reverse().map((row) => formatMessage(row, contactIndex));
 }
 
 async function getLatestMessages(limit: number) {
@@ -299,7 +426,12 @@ async function getLatestMessages(limit: number) {
     limit ${limit};
   `;
 
-  return (await runSqliteJson<MessageRow>(sql)).map(formatMessage);
+  const [rows, contactIndex] = await Promise.all([
+    runSqliteJson<MessageRow>(sql),
+    buildContactIndex(),
+  ]);
+
+  return rows.map((row) => formatMessage(row, contactIndex));
 }
 
 async function searchMessages(query: string, limit: number) {
@@ -475,7 +607,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           set isFirst to true
           repeat with p in every person
             set personName to (name of p as text)
-            set matchesPerson to (personName contains "${query}")
+            set matchesPerson to (personName contains "${escapeAppleScriptString(query)}")
             set phonesJson to "["
             set emailsJson to "["
             set phoneMatch to false
@@ -485,14 +617,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               set phoneValue to (value of ph as text)
               if phonesJson is not "[" then set phonesJson to phonesJson & ","
               set phonesJson to phonesJson & "\\"" & phoneValue & "\\""
-              if phoneValue contains "${query}" then set phoneMatch to true
+              if phoneValue contains "${escapeAppleScriptString(query)}" then set phoneMatch to true
             end repeat
 
             repeat with em in emails of p
               set emailValue to (value of em as text)
               if emailsJson is not "[" then set emailsJson to emailsJson & ","
               set emailsJson to emailsJson & "\\"" & emailValue & "\\""
-              if emailValue contains "${query}" then set emailMatch to true
+              if emailValue contains "${escapeAppleScriptString(query)}" then set emailMatch to true
             end repeat
 
             if matchesPerson or phoneMatch or emailMatch then
