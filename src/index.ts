@@ -3,6 +3,8 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import os from "os";
+import path from "path";
+import { fileURLToPath } from "url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -13,6 +15,8 @@ import {
 const execFileAsync = promisify(execFile);
 const APPLE_EPOCH_MS = 978307200000;
 const MESSAGES_DB_PATH = `${os.homedir()}/Library/Messages/chat.db`;
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CONTACTS_HELPER_PATH = path.join(PROJECT_ROOT, "scripts", "contacts.swift");
 
 type ChatSummaryRow = {
   chat_id: number;
@@ -74,6 +78,16 @@ async function runAppleScript(script: string): Promise<string> {
   }
 }
 
+async function ensureAppRunning(appName: string): Promise<void> {
+  const script = `
+    tell application "${escapeAppleScriptString(appName)}"
+      launch
+    end tell
+  `;
+
+  await runAppleScript(script);
+}
+
 async function runSqliteJson<T>(query: string): Promise<T[]> {
   try {
     const { stdout } = await execFileAsync("sqlite3", ["-json", MESSAGES_DB_PATH, query]);
@@ -89,6 +103,15 @@ async function runSqliteText(args: string[]): Promise<string> {
     return stdout.trim();
   } catch (error) {
     throw new Error(`sqlite error: ${getErrorMessage(error)}`);
+  }
+}
+
+async function runContactsHelper(args: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("swift", [CONTACTS_HELPER_PATH, ...args]);
+    return stdout.trim();
+  } catch (error) {
+    throw new Error(`contacts helper error: ${getErrorMessage(error)}`);
   }
 }
 
@@ -128,10 +151,14 @@ function decodeAttributedBodyHex(hex: string | null | undefined): string | null 
     ?.map((part) => part.trim())
     .filter(Boolean)
     .filter((part) => /[A-Za-z0-9]/.test(part))
+    .filter((part) => part.length >= 2)
+    .filter((part) => !/^[+*@]+$/.test(part))
+    .filter((part) => part !== "iI")
     .filter(
       (part) =>
         ![
           "streamtype",
+          "streamtyped",
           "NSAttributedString",
           "NSObject",
           "NSString",
@@ -143,7 +170,7 @@ function decodeAttributedBodyHex(hex: string | null | undefined): string | null 
     );
 
   if (!values?.length) return null;
-  values.sort((a, b) => b.length - a.length);
+  values.sort((a, b) => a.length - b.length);
   return values[0] ?? null;
 }
 
@@ -153,40 +180,11 @@ function getMessageText(text: string | null, attributedHex: string | null): stri
 }
 
 async function getAllContacts(): Promise<ContactRecord[]> {
-  const script = `
-    tell application "Contacts"
-      set output to "["
-      set isFirst to true
-      repeat with p in every person
-        set personName to (name of p as text)
-        set phonesJson to "["
-        set emailsJson to "["
+  return JSON.parse(await runContactsHelper(["all"])) as ContactRecord[];
+}
 
-        repeat with ph in phones of p
-          set phoneValue to (value of ph as text)
-          if phonesJson is not "[" then set phonesJson to phonesJson & ","
-          set phonesJson to phonesJson & "\\"" & phoneValue & "\\""
-        end repeat
-
-        repeat with em in emails of p
-          set emailValue to (value of em as text)
-          if emailsJson is not "[" then set emailsJson to emailsJson & ","
-          set emailsJson to emailsJson & "\\"" & emailValue & "\\""
-        end repeat
-
-        if not isFirst then set output to output & ","
-        set output to output & "{"
-        set output to output & "\\"name\\":\\"" & personName & "\\","
-        set output to output & "\\"phones\\":" & phonesJson & ","
-        set output to output & "\\"emails\\":" & emailsJson
-        set output to output & "}"
-        set isFirst to false
-      end repeat
-      return output & "]"
-    end tell
-  `;
-
-  return JSON.parse(await runAppleScript(script)) as ContactRecord[];
+async function searchContacts(query: string): Promise<ContactRecord[]> {
+  return JSON.parse(await runContactsHelper(["search", query])) as ContactRecord[];
 }
 
 async function buildContactIndex(): Promise<Map<string, string>> {
@@ -601,49 +599,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (request.params.name) {
     case "search_contacts": {
       const query = String(request.params.arguments?.query ?? "").toLowerCase();
-      const script = `
-        tell application "Contacts"
-          set output to "["
-          set isFirst to true
-          repeat with p in every person
-            set personName to (name of p as text)
-            set matchesPerson to (personName contains "${escapeAppleScriptString(query)}")
-            set phonesJson to "["
-            set emailsJson to "["
-            set phoneMatch to false
-            set emailMatch to false
-
-            repeat with ph in phones of p
-              set phoneValue to (value of ph as text)
-              if phonesJson is not "[" then set phonesJson to phonesJson & ","
-              set phonesJson to phonesJson & "\\"" & phoneValue & "\\""
-              if phoneValue contains "${escapeAppleScriptString(query)}" then set phoneMatch to true
-            end repeat
-
-            repeat with em in emails of p
-              set emailValue to (value of em as text)
-              if emailsJson is not "[" then set emailsJson to emailsJson & ","
-              set emailsJson to emailsJson & "\\"" & emailValue & "\\""
-              if emailValue contains "${escapeAppleScriptString(query)}" then set emailMatch to true
-            end repeat
-
-            if matchesPerson or phoneMatch or emailMatch then
-              if not isFirst then set output to output & ","
-              set output to output & "{"
-              set output to output & "\\"name\\":\\"" & personName & "\\","
-              set output to output & "\\"phones\\":" & phonesJson & ","
-              set output to output & "\\"emails\\":" & emailsJson
-              set output to output & "}"
-              set isFirst to false
-            end if
-          end repeat
-          return output & "]"
-        end tell
-      `;
-
       try {
         return {
-          content: [{ type: "text", text: await runAppleScript(script) }],
+          content: [{ type: "text", text: JSON.stringify(await searchContacts(query)) }],
         };
       } catch (error) {
         return {
@@ -662,6 +620,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       const escapedMessage = message.replace(/"/g, '\\"');
+      await ensureAppRunning("Messages");
       const script = `
         tell application "Messages"
           send "${escapedMessage}" to buddy "${recipient}" of (service 1 whose service type = iMessage)
