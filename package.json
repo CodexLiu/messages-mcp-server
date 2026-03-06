@@ -1,0 +1,25 @@
+{
+  "name": "messages-mcp-server",
+  "version": "0.1.0",
+  "description": "Local MCP server for reading and sending Messages on macOS",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "messages-mcp-server": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "watch": "tsc --watch",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "0.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3"
+  }
+}
