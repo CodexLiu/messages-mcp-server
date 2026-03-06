@@ -8,161 +8,93 @@ It uses:
 - `Contacts.framework` through a Swift helper for contact lookup and name resolution
 - `~/Library/Messages/chat.db` for inbox and history reads
 
-## Tools
+## What It Can Do
 
-### Core messaging tools
+- Search contacts by name, phone number, or email
+- Resolve names onto chats and message senders
+- List recent chats with last message previews
+- Read messages from a specific conversation
+- Show the latest messages across all chats
+- Search messages by content
+- Show unread chats
+- Resolve a person into matching contacts, chats, and sendable identifiers
+- Send iMessages through the local Messages app
+- Expose read-only Messages database inspection tools for debugging
 
-#### `search_contacts`
+## Manual Setup
 
-Find contacts by name, phone number, or email.
+This server needs macOS privacy permissions. Without them, chat reads or contact lookup will fail.
 
-Inputs:
+### 1. Sign in to Messages
 
-- `query`: text to search for
+Open the Messages app and make sure the Mac is signed into the account you want to use.
 
-Use this when you need to resolve a person before sending or reading.
+### 2. Grant Full Disk Access
 
-#### `send_imessage`
+This is required for reading `~/Library/Messages/chat.db`.
 
-Send an iMessage through the local Messages app.
+1. Open `System Settings`
+2. Go to `Privacy & Security`
+3. Open `Full Disk Access`
+4. Enable Full Disk Access for the app or process that runs this MCP server
 
-Inputs:
+Common cases:
 
-- `recipient`: phone number or email
-- `message`: message text to send
+- `Codex`
+- `Terminal`
+- `iTerm`
 
-This is the only write tool in the server.
+If it is not listed:
 
-#### `list_chats`
+1. Click `+`
+2. Add the app you use to run the server
+3. Toggle it on
 
-Return recent conversations from the Messages database with resolved participant names.
+After enabling it, fully quit and reopen the app.
 
-Inputs:
+### 3. Grant Contacts Access
 
-- `limit`: max number of chats to return
-- `query`: optional raw chat search string
-- `includeArchived`: whether archived chats should be included
+This is required for contact search and name resolution.
 
-Useful as the inbox view. Output includes:
+1. Open `System Settings`
+2. Go to `Privacy & Security`
+3. Open `Contacts`
+4. Enable Contacts access for the app or process that runs this MCP server
 
-- `preferredName`
-- `participants`
-- `messageCount`
-- `unreadCount`
-- `lastMessageAt`
-- `lastMessageText`
+After enabling it, fully quit and reopen the app.
 
-#### `read_chat`
+### 4. Grant Automation Access for Sending
 
-Read recent messages from a single conversation.
+This is required because sending goes through AppleScript and the Messages app.
 
-Inputs:
+The first time a send action runs, macOS may prompt for automation permissions. Approve the prompt so the host app can control Messages.
 
-- `chatId`: numeric chat ID from `list_chats`
-- `chatIdentifier`: phone number or email for the chat
-- `limit`: max number of messages to return
+If you need to review it manually:
 
-You can provide either `chatId` or `chatIdentifier`.
+1. Open `System Settings`
+2. Go to `Privacy & Security`
+3. Open `Automation`
+4. Make sure the host app is allowed to control `Messages`
 
-#### `get_latest_messages`
+## Install / Run
 
-Return a global latest-messages feed across all chats.
+```bash
+npm install
+npm run build
+```
 
-Inputs:
+Configure your MCP host to run:
 
-- `limit`: max number of messages to return
+```bash
+node /absolute/path/to/build/index.js
+```
 
-Useful when the model needs the most recent activity without first choosing a chat.
+## Notes
 
-#### `search_messages`
-
-Search recent messages by message text, sender, chat identifier, or chat display name.
-
-Inputs:
-
-- `query`: search text
-- `limit`: max number of results
-
-### Higher-level helper tools
-
-#### `get_unread_chats`
-
-Return chats that currently appear to have unread messages.
-
-Inputs:
-
-- `limit`: max number of chats to return
-
-#### `search_chats`
-
-Search chats in a more human way, including contact-name matches resolved through Contacts.
-
-Inputs:
-
-- `query`: search text
-- `limit`: max number of chats to return
-
-Use this instead of raw `list_chats` filtering when the query is person-oriented.
-
-#### `get_chat_by_contact`
-
-Find chats associated with a contact search query.
-
-Inputs:
-
-- `query`: person-like search text
-- `limit`: max number of chats to return
-
-This is useful when one person may have multiple chat channels such as iMessage, SMS, and RCS.
-
-#### `get_latest_message_for_contact`
-
-Return the latest message from the most recent chat matching a contact query.
-
-Inputs:
-
-- `query`: person-like search text
-
-Use this for prompts like “what was the latest message from Silvia?”
-
-#### `resolve_recipient`
-
-Resolve a person-like query into matching contacts, chats, and suggested recipient identifiers.
-
-Inputs:
-
-- `query`: person-like search text
-
-Useful before sending a message when multiple contacts or channels may match.
-
-### Power-user database tools
-
-#### `get_messages_db_schema`
-
-Inspect the Messages sqlite schema.
-
-Inputs:
-
-- `table`: optional table name
-
-Useful for debugging and future tool development.
-
-#### `query_messages_db`
-
-Run a read-only SQL query directly against the Messages database.
-
-Inputs:
-
-- `sql`: read-only SQL query
-
-Allowed query types are limited to read-only access. This is primarily an admin/debug tool, not the first choice for normal messaging tasks.
-
-## Requirements
-
-- macOS
-- Full Disk Access for the host process that reads `~/Library/Messages/chat.db`
-- Contacts permission for the Swift helper
-- Messages app signed in
+- Reading chats depends on local Messages database access
+- Contact lookup does not require the Contacts app to be open
+- Sending messages still depends on the Messages app and AppleScript permissions
+- The database tools are read-only and intended for debugging or advanced inspection
 
 ## Development
 
